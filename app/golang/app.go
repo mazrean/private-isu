@@ -848,7 +848,7 @@ func initImage() error {
 	}
 
 	posts := []Post{}
-	err = db.Select(&posts, "SELECT `id`, `mime`, `imgdata` FROM `mem_posts`")
+	err = db.Select(&posts, "SELECT `id`, `mime`, `imgdata` FROM `posts`")
 	if err != nil {
 		return fmt.Errorf("failed to select posts: %w", err)
 	}
