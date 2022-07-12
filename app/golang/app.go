@@ -837,7 +837,12 @@ const (
 )
 
 func initImage() error {
-	err := os.MkdirAll(imgDir, 0777)
+	err := os.RemoveAll(imgDir)
+	if err != nil {
+		return fmt.Errorf("image dir remove: %w", err)
+	}
+
+	err = os.MkdirAll(imgDir, 0777)
 	if err != nil && !os.IsExist(err) {
 		return fmt.Errorf("failed to create image directory: %w", err)
 	}
@@ -1120,6 +1125,11 @@ func main() {
 		log.Fatalf("Failed to connect to DB: %s.", err.Error())
 	}
 	defer db.Close()
+
+	err = initImage()
+	if err != nil {
+		log.Fatalf("Failed to initialize image: %s.", err.Error())
+	}
 
 	r := chi.NewRouter()
 
