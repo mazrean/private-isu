@@ -182,7 +182,7 @@ type CommentInfo struct {
 	Comments []Comment
 }
 
-var postCommentCache *isucache.AtomicMap[int, *CommentInfo, CommentInfo]
+var postCommentCache = isucache.NewAtomicMap[int, *CommentInfo]("post_comment")
 
 func initPostCommentCache() error {
 	postWithComments := []struct {
@@ -299,8 +299,13 @@ func getTemplPath(filename string) string {
 }
 
 func getInitialize(w http.ResponseWriter, r *http.Request) {
+	isucache.AllPurge()
+
 	dbInitialize()
-	initPostCommentCache()
+	err := initPostCommentCache()
+	if err != nil {
+		log.Println(err)
+	}
 	w.WriteHeader(http.StatusOK)
 }
 
