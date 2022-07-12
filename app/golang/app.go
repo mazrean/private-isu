@@ -862,6 +862,8 @@ func initImage() error {
 				continue
 			}
 
+			p := p
+
 			eg.Go(func() error {
 				f, err := os.Create(fmt.Sprintf("%s/%d.%s", imgDir, p.ID, ext))
 				if err != nil {
