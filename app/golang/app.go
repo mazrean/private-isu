@@ -418,7 +418,7 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 		CSRFToken string
 		Flash     string
 		Posts     []Post
-	}{posts, me, getCSRFToken(r), getFlash(w, r, "notice")})
+	}{me, getCSRFToken(r), getFlash(w, r, "notice"), posts})
 }
 
 func getAccountName(w http.ResponseWriter, r *http.Request) {
@@ -504,7 +504,7 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 		PostCount      int
 		CommentCount   int
 		CommentedCount int
-	}{posts, user, postCount, commentCount, commentedCount, me})
+	}{user, me, posts, postCount, commentCount, commentedCount})
 }
 
 func getPosts(w http.ResponseWriter, r *http.Request) {
@@ -594,7 +594,7 @@ func getPostsID(w http.ResponseWriter, r *http.Request) {
 	)).Execute(w, struct {
 		Me   User
 		Post Post
-	}{p, me})
+	}{me, p})
 }
 
 func postIndex(w http.ResponseWriter, r *http.Request) {
@@ -762,7 +762,7 @@ func getAdminBanned(w http.ResponseWriter, r *http.Request) {
 		Me        User
 		CSRFToken string
 		Users     []User
-	}{users, me, getCSRFToken(r)})
+	}{me, getCSRFToken(r), users})
 }
 
 func postAdminBanned(w http.ResponseWriter, r *http.Request) {
