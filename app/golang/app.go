@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	crand "crypto/rand"
 	"fmt"
 	"html/template"
@@ -27,6 +28,7 @@ import (
 	isudb "github.com/mazrean/isucon-go-tools/db"
 	isuhttp "github.com/mazrean/isucon-go-tools/http"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 )
 
 var (
@@ -196,10 +198,14 @@ func initPostCommentCache() error {
 	}
 
 	eg := &errgroup.Group{}
+	sw := semaphore.NewWeighted(100)
 
 	for _, postWithComment := range postWithComments {
 		postWithComment := postWithComment
+		_ = sw.Acquire(context.Background(), 1)
 		eg.Go(func() error {
+			defer sw.Release(1)
+
 			var comments []Comment
 			err = db.Select(&comments, "SELECT `comments`.*, "+
 				"`users`.`id` AS `user.id`, `users`.`passhash` AS `user.passhash`, `users`.`account_name` AS `user.account_name`, `users`.`authority` AS `user.authority`, `users`.`created_at` AS `user.created_at` "+
