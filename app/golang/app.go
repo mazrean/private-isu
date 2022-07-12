@@ -92,6 +92,7 @@ func dbInitialize() {
 	sqls := []string{
 		"DELETE FROM users WHERE id > 1000",
 		"DELETE FROM posts WHERE id > 10000",
+		"DELETE FROM mem_posts WHERE id > 10000",
 		"DELETE FROM comments WHERE id > 100000",
 		"UPDATE users SET del_flg = 0",
 		"UPDATE users SET del_flg = 1 WHERE id % 50 = 0",
@@ -373,6 +374,12 @@ func getInitialize(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Println(err)
 	}
+
+	err = initImage()
+	if err != nil {
+		log.Println(err)
+	}
+
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -497,7 +504,7 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 
 	results := []Post{}
 
-	err := db.Select(&results, "SELECT `id`, `user_id`, `body`, `mime`, `created_at` FROM `posts` ORDER BY `created_at` DESC")
+	err := db.Select(&results, "SELECT `id`, `user_id`, `body`, `mime`, `created_at` FROM `mem_posts` ORDER BY `created_at` DESC")
 	if err != nil {
 		log.Print(err)
 		return
@@ -543,7 +550,7 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 
 	results := []Post{}
 
-	err = db.Select(&results, "SELECT `id`, `user_id`, `body`, `mime`, `created_at` FROM `posts` WHERE `user_id` = ? ORDER BY `created_at` DESC", user.ID)
+	err = db.Select(&results, "SELECT `id`, `user_id`, `body`, `mime`, `created_at` FROM `mem_posts` WHERE `user_id` = ? ORDER BY `created_at` DESC", user.ID)
 	if err != nil {
 		log.Print(err)
 		return
@@ -563,7 +570,7 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 	}
 
 	postIDs := []int{}
-	err = db.Select(&postIDs, "SELECT `id` FROM `posts` WHERE `user_id` = ?", user.ID)
+	err = db.Select(&postIDs, "SELECT `id` FROM `mem_posts` WHERE `user_id` = ?", user.ID)
 	if err != nil {
 		log.Print(err)
 		return
@@ -631,7 +638,7 @@ func getPosts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	results := []Post{}
-	err = db.Select(&results, "SELECT `id`, `user_id`, `body`, `mime`, `created_at` FROM `posts` WHERE `created_at` <= ? ORDER BY `created_at` DESC", t.Format(ISO8601Format))
+	err = db.Select(&results, "SELECT `id`, `user_id`, `body`, `mime`, `created_at` FROM `mem_posts` WHERE `created_at` <= ? ORDER BY `created_at` DESC", t.Format(ISO8601Format))
 	if err != nil {
 		log.Print(err)
 		return
@@ -667,7 +674,7 @@ func getPostsID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	results := []Post{}
-	err = db.Select(&results, "SELECT * FROM `posts` WHERE `id` = ?", pid)
+	err = db.Select(&results, "SELECT * FROM `mem_posts` WHERE `id` = ?", pid)
 	if err != nil {
 		log.Print(err)
 		return
@@ -724,16 +731,16 @@ func postIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mime := ""
+	ext := ""
 	if file != nil {
 		// 投稿のContent-Typeからファイルのタイプを決定する
 		contentType := header.Header["Content-Type"][0]
 		if strings.Contains(contentType, "jpeg") {
-			mime = "image/jpeg"
+			ext = "jpg"
 		} else if strings.Contains(contentType, "png") {
-			mime = "image/png"
+			ext = "png"
 		} else if strings.Contains(contentType, "gif") {
-			mime = "image/gif"
+			ext = "gif"
 		} else {
 			session := getSession(r)
 			session.Values["notice"] = "投稿できる画像形式はjpgとpngとgifだけです"
@@ -744,30 +751,18 @@ func postIndex(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	filedata, err := io.ReadAll(file)
+	tx, err := db.Begin()
 	if err != nil {
 		log.Print(err)
 		return
 	}
 
-	if len(filedata) > UploadLimit {
-		session := getSession(r)
-		session.Values["notice"] = "ファイルサイズが大きすぎます"
-		session.Save(r, w)
-
-		http.Redirect(w, r, "/", http.StatusFound)
-		return
-	}
-
-	query := "INSERT INTO `posts` (`user_id`, `mime`, `imgdata`, `body`) VALUES (?,?,?,?)"
-	result, err := db.Exec(
-		query,
+	result, err := db.Exec("INSERT INTO `mem_posts` (`user_id`, `body`) VALUES (?,?)",
 		me.ID,
-		mime,
-		filedata,
 		r.FormValue("body"),
 	)
 	if err != nil {
+		tx.Rollback()
 		log.Print(err)
 		return
 	}
@@ -775,10 +770,117 @@ func postIndex(w http.ResponseWriter, r *http.Request) {
 	pid, err := result.LastInsertId()
 	if err != nil {
 		log.Print(err)
+
+		err := tx.Rollback()
+		if err != nil {
+			log.Print(err)
+		}
+
+		return
+	}
+
+	filePath := fmt.Sprintf("%s/%d.%s", imgDir, pid, ext)
+	f, err := os.Create(filePath)
+	if err != nil {
+		log.Print(err)
+
+		err := tx.Rollback()
+		if err != nil {
+			log.Print(err)
+		}
+
+		return
+	}
+
+	n, err := io.Copy(f, file)
+	if err != nil {
+		log.Print(err)
+
+		err := tx.Rollback()
+		if err != nil {
+			log.Printf("%d bytes: %s\n", n, err)
+		}
+
+		return
+	}
+
+	if n > UploadLimit {
+		err := tx.Rollback()
+		if err != nil {
+			log.Print(err)
+		}
+
+		session := getSession(r)
+		session.Values["notice"] = "ファイルサイズが大きすぎます"
+		session.Save(r, w)
+
+		err = os.Remove(filePath)
+		if err != nil {
+			log.Print(err)
+		}
+
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		log.Print(err)
 		return
 	}
 
 	http.Redirect(w, r, "/posts/"+strconv.FormatInt(pid, 10), http.StatusFound)
+}
+
+const (
+	imgDir = "../public/image"
+)
+
+func initImage() error {
+	err := os.MkdirAll(imgDir, 0777)
+	if err != nil && !os.IsExist(err) {
+		return fmt.Errorf("failed to create image directory: %w", err)
+	}
+
+	posts := []Post{}
+	err = db.Select(&posts, "SELECT `id`, `mime`, `imgdata` FROM `mem_posts`")
+	if err != nil {
+		return fmt.Errorf("failed to select posts: %w", err)
+	}
+
+	for _, p := range posts {
+		var ext string
+		switch p.Mime {
+		case "image/jpeg":
+			ext = "jpg"
+		case "image/png":
+			ext = "png"
+		case "image/gif":
+			ext = "gif"
+		default:
+			continue
+		}
+
+		err := func() error {
+			f, err := os.Create(fmt.Sprintf("%s/%d.%s", imgDir, p.ID, ext))
+			if err != nil {
+				return fmt.Errorf("failed to create image file: %w", err)
+			}
+			defer f.Close()
+
+			_, err = f.Write(p.Imgdata)
+			if err != nil {
+				return fmt.Errorf("failed to write image file: %w", err)
+			}
+
+			return nil
+		}()
+		if err != nil {
+			return fmt.Errorf("failed to write image file: %w", err)
+		}
+	}
+
+	return nil
 }
 
 func getImage(w http.ResponseWriter, r *http.Request) {
@@ -790,7 +892,7 @@ func getImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	post := Post{}
-	err = db.Get(&post, "SELECT `mime`, `imgdata` FROM `posts` WHERE `id` = ?", pid)
+	err = db.Get(&post, "SELECT `mime`, `imgdata` FROM `mem_posts` WHERE `id` = ?", pid)
 	if err != nil {
 		log.Print(err)
 		return
