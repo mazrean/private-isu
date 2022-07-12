@@ -375,6 +375,11 @@ func getInitialize(w http.ResponseWriter, r *http.Request) {
 		log.Println(err)
 	}
 
+	err = initPostCache()
+	if err != nil {
+		log.Fatalf("Failed to initialize post cache: %s.", err.Error())
+	}
+
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -1179,6 +1184,11 @@ func main() {
 		log.Fatalf("Failed to connect to DB: %s.", err.Error())
 	}
 	defer db.Close()
+
+	err = initPostCache()
+	if err != nil {
+		log.Fatalf("Failed to initialize post cache: %s.", err.Error())
+	}
 
 	r := chi.NewRouter()
 
