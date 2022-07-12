@@ -208,8 +208,8 @@ github.com/mattn/go-sqlite3 v1.14.6 h1:dNPt6NO46WmLVt2DLNpwczCmdV5boIZ6g/tlDrlRU
 github.com/mattn/go-sqlite3 v1.14.6/go.mod h1:NyWgC/yNuGj7Q9rpYnZvas74GogHl5/Z4A/KQRfk6bU=
 github.com/matttproud/golang_protobuf_extensions v1.0.1 h1:4hp9jkHxhMHkqkrB3Ix0jegS5sx/RkqARlsWZ6pIwiU=
 github.com/matttproud/golang_protobuf_extensions v1.0.1/go.mod h1:D8He9yQNgCq6Z5Ld7szi9bcBfOoFv/3dc6xSMkL2PC0=
-github.com/mazrean/isucon-go-tools v1.5.2 h1:UW91jv3y7qs2c30shqdcsN4+O168jxeKv2AMJV8uRTk=
-github.com/mazrean/isucon-go-tools v1.5.2/go.mod h1:/6+fMPSq8hYoD2f9b+qkcwXCYcxd8hlbscWXIoEnlks=
+github.com/mazrean/isucon-go-tools v1.5.3 h1:kaoldr+kILNT+nC+oaT/BumoAjQzWGaYdl2TnCGZ4eA=
+github.com/mazrean/isucon-go-tools v1.5.3/go.mod h1:/6+fMPSq8hYoD2f9b+qkcwXCYcxd8hlbscWXIoEnlks=
 github.com/memcachier/mc v2.0.1+incompatible h1:s8EDz0xrJLP8goitwZOoq1vA/sm0fPS4X3KAF0nyhWQ=
 github.com/memcachier/mc v2.0.1+incompatible/go.mod h1:7bkvFE61leUBvXz+yxsOnGBQSZpBSPIMUQSmmSHvuXc=
 github.com/modern-go/concurrent v0.0.0-20180228061459-e0a39a4cb421/go.mod h1:6dJC0mAP4ikYIbvyc7fijjWJddQyLn8Ig3JB5CqoB9Q=

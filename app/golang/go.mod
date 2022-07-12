@@ -1,6 +1,6 @@
 module github.com/catatsuy/private-isu/webapp/golang
 
-go 1.18
+go 1.19
 
 require (
 	github.com/bradfitz/gomemcache v0.0.0-20220106215444-fb4bf637b56d
@@ -9,7 +9,7 @@ require (
 	github.com/go-sql-driver/mysql v1.6.0
 	github.com/gorilla/sessions v1.2.1
 	github.com/jmoiron/sqlx v1.3.5
-	github.com/mazrean/isucon-go-tools v1.5.2
+	github.com/mazrean/isucon-go-tools v1.5.3
 )
 
 require (
