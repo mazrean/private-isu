@@ -919,6 +919,11 @@ func main() {
 	}
 	defer db.Close()
 
+	err = initPostCommentCache()
+	if err != nil {
+		log.Fatalf("Failed to initialize post comment cache: %s.", err.Error())
+	}
+
 	r := chi.NewRouter()
 
 	r.Get("/initialize", getInitialize)
