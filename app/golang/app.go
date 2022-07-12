@@ -204,9 +204,15 @@ func initPostCommentCache() error {
 		}
 		defer f.Close()
 
-		err = gob.NewDecoder(f).Decode(&postCommentCache)
+		m := map[int]*CommentInfo{}
+		err = gob.NewDecoder(f).Decode(&m)
 		if err != nil {
 			return err
+		}
+
+		postCommentCache.Purge()
+		for k, v := range m {
+			postCommentCache.Store(k, v)
 		}
 
 		return nil
@@ -221,6 +227,7 @@ func initPostCommentCache() error {
 		return fmt.Errorf("failed to get post with comment count: %w", err)
 	}
 
+	m := make(map[int]*CommentInfo, len(postWithComments))
 	eg := &errgroup.Group{}
 	sw := semaphore.NewWeighted(100)
 
@@ -243,6 +250,10 @@ func initPostCommentCache() error {
 				comments[i], comments[j] = comments[j], comments[i]
 			}
 
+			m[postWithComment.PostID] = &CommentInfo{
+				Count:    postWithComment.CommentCount,
+				Comments: comments,
+			}
 			postCommentCache.Store(postWithComment.PostID, &CommentInfo{
 				Count:    postWithComment.CommentCount,
 				Comments: comments,
@@ -264,7 +275,7 @@ func initPostCommentCache() error {
 	}
 	defer f.Close()
 
-	err = gob.NewEncoder(f).Encode(postCommentCache)
+	err = gob.NewEncoder(f).Encode(m)
 	if err != nil {
 		log.Printf("failed to encode post comment cache: %s\n", err)
 		return nil
@@ -834,7 +845,7 @@ func postComment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	comment := Comment{}
-	err = db.Get(&comment, "SELECT * FROM `comment` WHERE `id` = ?", cid)
+	err = db.Get(&comment, "SELECT * FROM `comments` WHERE `id` = ?", cid)
 	if err != nil {
 		log.Print(err)
 		return
@@ -934,7 +945,12 @@ func main() {
 		}
 		defer f.Close()
 
-		err = gob.NewEncoder(f).Encode(postCommentCache)
+		m := map[int]*CommentInfo{}
+		postCommentCache.Range(func(key int, value *CommentInfo) bool {
+			m[key] = value
+			return true
+		})
+		err = gob.NewEncoder(f).Encode(m)
 		if err != nil {
 			log.Print(err)
 			return
@@ -951,10 +967,16 @@ func main() {
 			}
 			defer f.Close()
 
-			err = gob.NewDecoder(f).Decode(&postCommentCache)
+			m := map[int]*CommentInfo{}
+			err = gob.NewDecoder(f).Decode(&m)
 			if err != nil {
 				log.Print(err)
 				return
+			}
+
+			postCommentCache.Purge()
+			for key, value := range m {
+				postCommentCache.Store(key, value)
 			}
 		}()
 	}
