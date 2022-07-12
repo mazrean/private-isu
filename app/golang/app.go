@@ -1130,11 +1130,6 @@ func main() {
 	}
 	defer db.Close()
 
-	err = initImage()
-	if err != nil {
-		log.Fatalf("Failed to initialize image: %s.", err.Error())
-	}
-
 	r := chi.NewRouter()
 
 	r.Get("/initialize", getInitialize)
