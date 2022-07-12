@@ -861,7 +861,7 @@ func postIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	postCacheLocker.Lock()
-	newPostCache := make([]*Post, len(postCache)+1)
+	newPostCache := make([]*Post, 0, len(postCache)+1)
 	newPostCache = append(newPostCache, &post)
 	newPostCache = append(newPostCache, postCache...)
 	postCache = newPostCache
