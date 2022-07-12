@@ -424,12 +424,17 @@ func getInitialize(w http.ResponseWriter, r *http.Request) {
 
 	err = initPostCache()
 	if err != nil {
-		log.Fatalf("Failed to initialize post cache: %s.", err.Error())
+		log.Printf("Failed to initialize post cache: %s.", err.Error())
 	}
 
 	err = initUserCache()
 	if err != nil {
-		log.Fatalf("Failed to initialize user cache: %s.", err.Error())
+		log.Printf("Failed to initialize user cache: %s.", err.Error())
+	}
+
+	err = initUserCommentCache()
+	if err != nil {
+		log.Printf("Failed to initialize user comment cache: %s.", err.Error())
 	}
 
 	w.WriteHeader(http.StatusOK)
@@ -640,17 +645,37 @@ var accountNameTemplate = template.Must(template.New("layout.html").Funcs(fmap).
 	getTemplPath("post.html"),
 ))
 
-func getAccountName(w http.ResponseWriter, r *http.Request) {
-	accountName := chi.URLParam(r, "accountName")
-	user := User{}
+var userCommentCache = isucache.NewMap[int, int]("user_comment")
 
-	err := db.Get(&user, "SELECT * FROM `users` WHERE `account_name` = ? AND `del_flg` = 0", accountName)
+func initUserCommentCache() error {
+	var users []struct {
+		UserID int `db:"user_id"`
+		Count  int `db:"count"`
+	}
+	err := db.Select(&users, "SELECT `user_id`, COUNT(*) AS `count` FROM `comments` GROUP BY `user_id`")
 	if err != nil {
-		log.Print(err)
-		return
+		return err
 	}
 
-	if user.ID == 0 {
+	for _, user := range users {
+		userCommentCache.Store(user.UserID, user.Count)
+	}
+
+	return nil
+}
+
+func getAccountName(w http.ResponseWriter, r *http.Request) {
+	accountName := chi.URLParam(r, "accountName")
+	var user *User
+	userCache.Range(func(i int, u *User) bool {
+		if u.AccountName == accountName && u.DelFlg == 0 {
+			user = u
+			return false
+		}
+
+		return true
+	})
+	if user == nil {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
@@ -671,10 +696,9 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	commentCount := 0
-	err = db.Get(&commentCount, "SELECT COUNT(*) AS count FROM `comments` WHERE `user_id` = ?", user.ID)
-	if err != nil {
-		log.Print(err)
+	commentCount, ok := userCommentCache.Load(user.ID)
+	if !ok {
+		log.Print("userCommentCache not found")
 		return
 	}
 
@@ -700,7 +724,7 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 	me := getSessionUser(r)
 
 	accountNameTemplate.Execute(w, struct {
-		User           User
+		User           *User
 		Me             User
 		Posts          []*Post
 		PostCount      int
@@ -1101,6 +1125,12 @@ func postComment(w http.ResponseWriter, r *http.Request) {
 		Count:    commentInfo.Count + 1,
 	})
 
+	num, ok := userCommentCache.Load(me.ID)
+	if !ok {
+		num = 0
+	}
+	userCommentCache.Store(me.ID, num+1)
+
 	http.Redirect(w, r, fmt.Sprintf("/posts/%d", postID), http.StatusFound)
 }
 
@@ -1281,6 +1311,11 @@ func main() {
 	err = initUserCache()
 	if err != nil {
 		log.Fatalf("Failed to initialize user cache: %s.", err.Error())
+	}
+
+	err = initUserCommentCache()
+	if err != nil {
+		log.Fatalf("Failed to initialize user comment cache: %s.", err.Error())
 	}
 
 	r := chi.NewRouter()
