@@ -829,6 +829,7 @@ func main() {
 		dbname,
 	)
 
+	isudb.SetRetry(true)
 	db, err = isudb.DBMetricsSetup(sqlx.Open)("mysql", dsn)
 	if err != nil {
 		log.Fatalf("Failed to connect to DB: %s.", err.Error())
