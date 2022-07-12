@@ -852,7 +852,7 @@ func initImage() error {
 		offset = 0
 		first  = true
 	)
-	for first || len(posts) == 100 {
+	for ; first || len(posts) == 100; offset += 100 {
 		err = db.Select(&posts, "SELECT `id`, `mime`, `imgdata` FROM `posts` LIMIT 100 OFFSET ?", offset)
 		if err != nil {
 			return fmt.Errorf("failed to select posts: %w", err)
