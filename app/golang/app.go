@@ -161,14 +161,23 @@ func getSessionUser(r *http.Request) User {
 		return User{}
 	}
 
-	u := User{}
+	u := &User{}
 
-	err := db.Get(&u, "SELECT * FROM `users` WHERE `id` = ?", uid)
-	if err != nil {
-		return User{}
+	userID, ok := uid.(int)
+	if ok {
+		u, ok = userCache.Load(userID)
 	}
 
-	return u
+	if !ok {
+		err := db.Get(&u, "SELECT * FROM `users` WHERE `id` = ?", uid)
+		if err != nil {
+			return User{}
+		}
+
+		return *u
+	}
+
+	return *u
 }
 
 func getFlash(w http.ResponseWriter, r *http.Request, key string) string {
@@ -285,6 +294,24 @@ func initPostCommentCache() error {
 	return nil
 }
 
+var userCache = isucache.NewAtomicMap[int, *User]("user")
+
+func initUserCache() error {
+	userCache.Purge()
+
+	users := []*User{}
+	err := db.Select(&users, "SELECT * FROM `users`")
+	if err != nil {
+		return fmt.Errorf("failed to get users: %w", err)
+	}
+
+	for _, u := range users {
+		userCache.Store(u.ID, u)
+	}
+
+	return nil
+}
+
 func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, error) {
 	var posts []Post
 
@@ -310,10 +337,14 @@ func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, erro
 			}
 		}
 
-		err := db.Get(&p.User, "SELECT * FROM `users` WHERE `id` = ?", p.UserID)
-		if err != nil {
-			return nil, err
+		user, ok := userCache.Load(p.UserID)
+		if !ok {
+			err := db.Get(&p.User, "SELECT * FROM `users` WHERE `id` = ?", p.UserID)
+			if err != nil {
+				return nil, err
+			}
 		}
+		p.User = *user
 
 		p.CSRFToken = csrfToken
 
@@ -378,6 +409,11 @@ func getInitialize(w http.ResponseWriter, r *http.Request) {
 	err = initPostCache()
 	if err != nil {
 		log.Fatalf("Failed to initialize post cache: %s.", err.Error())
+	}
+
+	err = initUserCache()
+	if err != nil {
+		log.Fatalf("Failed to initialize user cache: %s.", err.Error())
 	}
 
 	w.WriteHeader(http.StatusOK)
@@ -477,13 +513,22 @@ func postRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session := getSession(r)
 	uid, err := result.LastInsertId()
 	if err != nil {
 		log.Print(err)
 		return
 	}
-	session.Values["user_id"] = uid
+
+	u := User{}
+	err = db.Get(&u, "SELECT * FROM `users` WHERE `id` = ?", uid)
+	if err != nil {
+		log.Print(err)
+		return
+	}
+	userCache.Store(u.ID, &u)
+
+	session := getSession(r)
+	session.Values["user_id"] = int(uid)
 	session.Values["csrf_token"] = secureRandomStr(16)
 	session.Save(r, w)
 
@@ -567,6 +612,7 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 	}
 
 	results := []Post{}
+	postIDs := []int{}
 	postCacheLocker.RLock()
 	for _, post := range postCache {
 		if post.UserID == user.ID {
@@ -588,12 +634,13 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	postIDs := []int{}
-	err = db.Select(&postIDs, "SELECT `id` FROM `posts` WHERE `user_id` = ?", user.ID)
-	if err != nil {
-		log.Print(err)
-		return
+	postCacheLocker.RLock()
+	for _, post := range postCache {
+		if post.UserID == user.ID {
+			postIDs = append(postIDs, post.ID)
+		}
 	}
+	postCacheLocker.RUnlock()
 	postCount := len(postIDs)
 
 	commentedCount := 0
@@ -1092,6 +1139,24 @@ func postAdminBanned(w http.ResponseWriter, r *http.Request) {
 
 	for _, id := range r.Form["uid[]"] {
 		db.Exec(query, 1, id)
+
+		uid, err := strconv.Atoi(id)
+		if err != nil {
+			log.Print(err)
+			continue
+		}
+		user, ok := userCache.Load(uid)
+		if !ok {
+			continue
+		}
+		userCache.Store(uid, &User{
+			ID:          user.ID,
+			AccountName: user.AccountName,
+			Passhash:    user.Passhash,
+			CreatedAt:   user.CreatedAt,
+			Authority:   user.Authority,
+			DelFlg:      1,
+		})
 	}
 
 	http.Redirect(w, r, "/admin/banned", http.StatusFound)
@@ -1188,6 +1253,11 @@ func main() {
 	err = initPostCache()
 	if err != nil {
 		log.Fatalf("Failed to initialize post cache: %s.", err.Error())
+	}
+
+	err = initUserCache()
+	if err != nil {
+		log.Fatalf("Failed to initialize user cache: %s.", err.Error())
 	}
 
 	r := chi.NewRouter()
