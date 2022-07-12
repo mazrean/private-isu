@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -493,16 +494,34 @@ func getLogout(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
+var (
+	postCache       = []*Post{}
+	postCacheLocker = sync.RWMutex{}
+)
+
+func initPostCache() error {
+	var posts []*Post
+	err := db.Select(&posts, "SELECT * FROM `posts` ORDER BY `created_at` DESC")
+	if err != nil {
+		return err
+	}
+
+	postCacheLocker.Lock()
+	postCache = posts
+	postCacheLocker.Unlock()
+
+	return nil
+}
+
 func getIndex(w http.ResponseWriter, r *http.Request) {
 	me := getSessionUser(r)
 
-	results := []Post{}
-
-	err := db.Select(&results, "SELECT `id`, `user_id`, `body`, `mime`, `created_at` FROM `posts` ORDER BY `created_at` DESC")
-	if err != nil {
-		log.Print(err)
-		return
+	postCacheLocker.RLock()
+	results := make([]Post, 0, len(postCache))
+	for _, post := range postCache {
+		results = append(results, *post)
 	}
+	postCacheLocker.RUnlock()
 
 	posts, err := makePosts(results, getCSRFToken(r), false)
 	if err != nil {
@@ -543,12 +562,13 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 	}
 
 	results := []Post{}
-
-	err = db.Select(&results, "SELECT `id`, `user_id`, `body`, `mime`, `created_at` FROM `posts` WHERE `user_id` = ? ORDER BY `created_at` DESC", user.ID)
-	if err != nil {
-		log.Print(err)
-		return
+	postCacheLocker.RLock()
+	for _, post := range postCache {
+		if post.UserID == user.ID {
+			results = append(results, *post)
+		}
 	}
+	postCacheLocker.RUnlock()
 
 	posts, err := makePosts(results, getCSRFToken(r), false)
 	if err != nil {
@@ -632,10 +652,11 @@ func getPosts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	results := []Post{}
-	err = db.Select(&results, "SELECT `id`, `user_id`, `body`, `mime`, `created_at` FROM `posts` WHERE `created_at` <= ? ORDER BY `created_at` DESC", t.Format(ISO8601Format))
-	if err != nil {
-		log.Print(err)
-		return
+	postCacheLocker.RLock()
+	for _, post := range postCache {
+		if post.CreatedAt.Before(t) {
+			results = append(results, *post)
+		}
 	}
 
 	posts, err := makePosts(results, getCSRFToken(r), false)
@@ -668,10 +689,11 @@ func getPostsID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	results := []Post{}
-	err = db.Select(&results, "SELECT * FROM `posts` WHERE `id` = ?", pid)
-	if err != nil {
-		log.Print(err)
-		return
+	postCacheLocker.RLock()
+	for _, post := range postCache {
+		if post.ID == pid {
+			results = append(results, *post)
+		}
 	}
 
 	posts, err := makePosts(results, getCSRFToken(r), true)
@@ -749,7 +771,7 @@ func postIndex(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	tx, err := db.Begin()
+	tx, err := db.Beginx()
 	if err != nil {
 		log.Print(err)
 		return
@@ -821,6 +843,27 @@ func postIndex(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
+
+	post := Post{}
+	err = tx.Get(&post, "SELECT * FROM `posts` WHERE `id` = ?", pid)
+	if err != nil {
+		log.Print(err)
+
+		err := tx.Rollback()
+		if err != nil {
+			log.Print(err)
+		}
+
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
+
+	postCacheLocker.Lock()
+	newPostCache := make([]*Post, len(postCache)+1)
+	newPostCache = append(newPostCache, &post)
+	newPostCache = append(newPostCache, postCache...)
+	postCache = newPostCache
+	postCacheLocker.Unlock()
 
 	err = tx.Commit()
 	if err != nil {
