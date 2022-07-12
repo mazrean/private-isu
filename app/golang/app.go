@@ -62,7 +62,7 @@ type Post struct {
 }
 
 type Comment struct {
-	User      User
+	User      User      `db:"user"`
 	CreatedAt time.Time `db:"created_at"`
 	Comment   string    `db:"comment"`
 	ID        int       `db:"id"`
@@ -177,30 +177,30 @@ func getFlash(w http.ResponseWriter, r *http.Request, key string) string {
 	}
 }
 
-func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, error) {
-	var posts []Post
+type CommentInfo struct {
+	Count    int
+	Comments []Comment
+}
 
-	for _, p := range results {
-		err := db.Get(&p.CommentCount, "SELECT COUNT(*) AS `count` FROM `comments` WHERE `post_id` = ?", p.ID)
-		if err != nil {
-			return nil, err
-		}
+var postCommentCache *isucache.AtomicMap[int, *CommentInfo, CommentInfo]
 
-		query := "SELECT * FROM `comments` WHERE `post_id` = ? ORDER BY `created_at` DESC"
-		if !allComments {
-			query += " LIMIT 3"
-		}
+func initPostCommentCache() error {
+	postWithComments := []struct {
+		PostID       int `db:"post_id"`
+		CommentCount int `db:"count"`
+	}{}
+	err := db.Select(&postWithComments, "SELECT `post_id`, COUNT(*) AS `count` FROM `comments` GROUP BY `post_id`")
+	if err != nil {
+		return fmt.Errorf("failed to get post with comment count: %w", err)
+	}
+
+	for _, postWithComment := range postWithComments {
 		var comments []Comment
-		err = db.Select(&comments, query, p.ID)
+		err = db.Select(&comments, "SELECT `comments`.*, "+
+			"`users`.`id` AS `user.id`, `users`.`passhash` AS `user.passhash`, `users`.`account_name` AS `user.account_name`, `users`.`authority` AS `user.authority`, `users`.`created_at` AS `user.created_at` "+
+			"FROM `comments` JOIN `users` ON `comments`.`user_id`=`users`.`id` WHERE `comments`.`post_id` = ? ORDER BY `comments`.`created_at` DESC LIMIT 3", postWithComment.PostID)
 		if err != nil {
-			return nil, err
-		}
-
-		for i := 0; i < len(comments); i++ {
-			err := db.Get(&comments[i].User, "SELECT * FROM `users` WHERE `id` = ?", comments[i].UserID)
-			if err != nil {
-				return nil, err
-			}
+			return fmt.Errorf("failed to get comments: %w", err)
 		}
 
 		// reverse
@@ -208,9 +208,41 @@ func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, erro
 			comments[i], comments[j] = comments[j], comments[i]
 		}
 
-		p.Comments = comments
+		postCommentCache.Store(postWithComment.PostID, &CommentInfo{
+			Count:    postWithComment.CommentCount,
+			Comments: comments,
+		})
+	}
 
-		err = db.Get(&p.User, "SELECT * FROM `users` WHERE `id` = ?", p.UserID)
+	return nil
+}
+
+func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, error) {
+	var posts []Post
+
+	for _, p := range results {
+		commentInfo, ok := postCommentCache.Load(p.ID)
+		if !ok {
+			p.CommentCount = 0
+			p.Comments = []Comment{}
+		} else {
+			p.CommentCount = commentInfo.Count
+			if !allComments {
+				p.Comments = commentInfo.Comments
+			} else {
+				var comments []Comment
+				err := db.Select(&comments, "SELECT `comments`.*, "+
+					"`users`.`id` AS `user.id`, `users`.`passhash` AS `user.passhash`, `users`.`account_name` AS `user.account_name`, `users`.`authority` AS `user.authority`, `users`.`created_at` AS `user.created_at` "+
+					"FROM `comments` JOIN `users` ON `comments`.`user_id`=`users`.`id` WHERE `comments`.`post_id` = ? ORDER BY `comments`.`created_at` ASC", p.ID)
+				if err != nil {
+					return nil, err
+				}
+
+				p.Comments = comments
+			}
+		}
+
+		err := db.Get(&p.User, "SELECT * FROM `users` WHERE `id` = ?", p.UserID)
 		if err != nil {
 			return nil, err
 		}
@@ -268,6 +300,7 @@ func getTemplPath(filename string) string {
 
 func getInitialize(w http.ResponseWriter, r *http.Request) {
 	dbInitialize()
+	initPostCommentCache()
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -727,11 +760,43 @@ func postComment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query := "INSERT INTO `comments` (`post_id`, `user_id`, `comment`) VALUES (?,?,?)"
-	_, err = db.Exec(query, postID, me.ID, r.FormValue("comment"))
+	result, err := db.Exec(query, postID, me.ID, r.FormValue("comment"))
 	if err != nil {
 		log.Print(err)
 		return
 	}
+
+	cid, err := result.LastInsertId()
+	if err != nil {
+		log.Printf("LastInsertId error:%v\n", err)
+		return
+	}
+
+	comment := Comment{}
+	err = db.Get(&comment, "SELECT * FROM `comment` WHERE `id` = ?", cid)
+	if err != nil {
+		log.Print(err)
+		return
+	}
+	comment.User = me
+
+	commentInfo, ok := postCommentCache.Load(postID)
+	if !ok {
+		commentInfo = &CommentInfo{}
+	}
+
+	comments := make([]Comment, 0, 3)
+	if commentInfo.Count > 3 {
+		comments = append(comments, commentInfo.Comments[1:]...)
+	} else {
+		comments = append(comments, commentInfo.Comments...)
+	}
+	comments = append(comments, comment)
+
+	postCommentCache.Store(postID, &CommentInfo{
+		Comments: comments,
+		Count:    commentInfo.Count + 1,
+	})
 
 	http.Redirect(w, r, fmt.Sprintf("/posts/%d", postID), http.StatusFound)
 }
