@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	crand "crypto/rand"
+	"encoding/gob"
 	"fmt"
 	"html/template"
 	"io"
@@ -11,10 +12,12 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path"
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/bradfitz/gomemcache/memcache"
@@ -187,12 +190,33 @@ type CommentInfo struct {
 
 var postCommentCache = isucache.NewAtomicMap[int, *CommentInfo]("post_comment")
 
+const (
+	initialGobPath = "./post_comment.gob"
+	lastGobPath    = "./post_comment_last.gob"
+)
+
 func initPostCommentCache() error {
+	_, err := os.Stat(initialGobPath)
+	if err == nil {
+		f, err := os.Open(initialGobPath)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+
+		err = gob.NewDecoder(f).Decode(&postCommentCache)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	}
+
 	postWithComments := []struct {
 		PostID       int `db:"post_id"`
 		CommentCount int `db:"count"`
 	}{}
-	err := db.Select(&postWithComments, "SELECT `post_id`, COUNT(*) AS `count` FROM `comments` GROUP BY `post_id`")
+	err = db.Select(&postWithComments, "SELECT `post_id`, COUNT(*) AS `count` FROM `comments` GROUP BY `post_id`")
 	if err != nil {
 		return fmt.Errorf("failed to get post with comment count: %w", err)
 	}
@@ -231,6 +255,19 @@ func initPostCommentCache() error {
 	err = eg.Wait()
 	if err != nil {
 		return fmt.Errorf("failed in errgroup: %w", err)
+	}
+
+	f, err := os.Create(initialGobPath)
+	if err != nil {
+		log.Printf("failed to create gob file: %s", err)
+		return nil
+	}
+	defer f.Close()
+
+	err = gob.NewEncoder(f).Encode(postCommentCache)
+	if err != nil {
+		log.Printf("failed to encode post comment cache: %s\n", err)
+		return nil
 	}
 
 	return nil
@@ -887,6 +924,41 @@ func postAdminBanned(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		f, err := os.Create(lastGobPath)
+		if err != nil {
+			log.Print(err)
+			return
+		}
+		defer f.Close()
+
+		err = gob.NewEncoder(f).Encode(postCommentCache)
+		if err != nil {
+			log.Print(err)
+			return
+		}
+	}()
+
+	_, err := os.Stat(lastGobPath)
+	if err == nil {
+		func() {
+			f, err := os.Open(lastGobPath)
+			if err != nil {
+				log.Print(err)
+				return
+			}
+			defer f.Close()
+
+			err = gob.NewDecoder(f).Decode(&postCommentCache)
+			if err != nil {
+				log.Print(err)
+				return
+			}
+		}()
+	}
+
 	host := os.Getenv("ISUCONP_DB_HOST")
 	if host == "" {
 		host = "localhost"
@@ -895,7 +967,7 @@ func main() {
 	if port == "" {
 		port = "3306"
 	}
-	_, err := strconv.Atoi(port)
+	_, err = strconv.Atoi(port)
 	if err != nil {
 		log.Fatalf("Failed to read DB port number from an environment variable ISUCONP_DB_PORT.\nError: %s", err.Error())
 	}
@@ -924,11 +996,6 @@ func main() {
 		log.Fatalf("Failed to connect to DB: %s.", err.Error())
 	}
 	defer db.Close()
-
-	err = initPostCommentCache()
-	if err != nil {
-		log.Fatalf("Failed to initialize post comment cache: %s.", err.Error())
-	}
 
 	r := chi.NewRouter()
 
