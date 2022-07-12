@@ -31,6 +31,7 @@ import (
 	isucache "github.com/mazrean/isucon-go-tools/cache"
 	isudb "github.com/mazrean/isucon-go-tools/db"
 	isuhttp "github.com/mazrean/isucon-go-tools/http"
+	isupool "github.com/mazrean/isucon-go-tools/pool"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
 )
@@ -588,11 +589,16 @@ var (
 	))
 )
 
+var postsPool = isupool.NewSlice("posts", func() *[]Post {
+	posts := make([]Post, 0, len(postCache))
+	return &posts
+})
+
 func getIndex(w http.ResponseWriter, r *http.Request) {
 	me := getSessionUser(r)
 
 	postCacheLocker.RLock()
-	results := make([]Post, 0, len(postCache))
+	results := *postsPool.Get()
 	for _, post := range postCache {
 		results = append(results, *post)
 	}
@@ -610,6 +616,7 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 		Flash     string
 		Posts     []Post
 	}{me, getCSRFToken(r), getFlash(w, r, "notice"), posts})
+	postsPool.Put(&results)
 }
 
 var accountNameTemplate = template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
@@ -722,8 +729,8 @@ func getPosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results := []Post{}
 	postCacheLocker.RLock()
+	results := *postsPool.Get()
 	for _, post := range postCache {
 		if post.CreatedAt.Before(t) {
 			results = append(results, *post)
@@ -743,6 +750,7 @@ func getPosts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	postsTemplate.Execute(w, posts)
+	postsPool.Put(&results)
 }
 
 var postIdTemplate = template.Must(template.New("layout.html").Funcs(fmap).ParseFiles(
