@@ -104,14 +104,21 @@ func dbInitialize() {
 }
 
 func tryLogin(accountName, password string) *User {
-	u := User{}
-	err := db.Get(&u, "SELECT * FROM users WHERE account_name = ? AND del_flg = 0", accountName)
-	if err != nil {
+	var u *User
+	userCache.Range(func(i int, user *User) bool {
+		if user.AccountName == accountName && user.DelFlg == 0 {
+			u = user
+			return false
+		}
+
+		return true
+	})
+	if u == nil {
 		return nil
 	}
 
 	if calculatePasshash(u.AccountName, password) == u.Passhash {
-		return &u
+		return u
 	} else {
 		return nil
 	}
