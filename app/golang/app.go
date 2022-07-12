@@ -1044,6 +1044,7 @@ func main() {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
 	go func() {
+		<-sig
 		f, err := os.Create(lastGobPath)
 		if err != nil {
 			log.Print(err)
