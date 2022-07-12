@@ -15,7 +15,6 @@ import (
 	"os/signal"
 	"path"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -838,15 +837,17 @@ func initImage() error {
 	}
 
 	var (
-		posts  = make([]Post, 0, 100)
+		posts  = make([]Post, 0, 1000)
 		offset = 0
 		first  = true
 	)
-	for ; first || len(posts) == 100; offset += 100 {
-		err = db.Select(&posts, "SELECT `id`, `mime`, `imgdata` FROM `posts` LIMIT 100 OFFSET ?", offset)
+	for ; first || len(posts) == 1000; offset += 1000 {
+		err = db.Select(&posts, "SELECT `id`, `mime`, `imgdata` FROM `posts` LIMIT 1000 OFFSET ?", offset)
 		if err != nil {
 			return fmt.Errorf("failed to select posts: %w", err)
 		}
+
+		eg := &errgroup.Group{}
 
 		for _, p := range posts {
 			var ext string
@@ -861,7 +862,7 @@ func initImage() error {
 				continue
 			}
 
-			err := func() error {
+			eg.Go(func() error {
 				f, err := os.Create(fmt.Sprintf("%s/%d.%s", imgDir, p.ID, ext))
 				if err != nil {
 					return fmt.Errorf("failed to create image file: %w", err)
@@ -874,13 +875,13 @@ func initImage() error {
 				}
 
 				return nil
-			}()
-			if err != nil {
-				return fmt.Errorf("failed to write image file: %w", err)
-			}
+			})
 		}
 
-		runtime.GC()
+		err := eg.Wait()
+		if err != nil {
+			return fmt.Errorf("failed in errgroup: %w", err)
+		}
 	}
 
 	return nil
@@ -1126,6 +1127,11 @@ func main() {
 		log.Fatalf("Failed to connect to DB: %s.", err.Error())
 	}
 	defer db.Close()
+
+	err = initImage()
+	if err != nil {
+		log.Fatalf("Failed to initialize image: %s.", err.Error())
+	}
 
 	r := chi.NewRouter()
 
