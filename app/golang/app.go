@@ -515,11 +515,17 @@ func postRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	exists := 0
-	// ユーザーが存在しない場合はエラーになるのでエラーチェックはしない
-	db.Get(&exists, "SELECT 1 FROM users WHERE `account_name` = ?", accountName)
+	exist := false
+	userCache.Range(func(i int, u *User) bool {
+		if u.AccountName == accountName {
+			exist = true
+			return false
+		}
 
-	if exists == 1 {
+		return true
+	})
+
+	if exist {
 		session := getSession(r)
 		session.Values["notice"] = "アカウント名がすでに使われています"
 		session.Save(r, w)
@@ -683,22 +689,11 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 
 	commentedCount := 0
 	if postCount > 0 {
-		s := []string{}
-		for range postIDs {
-			s = append(s, "?")
-		}
-		placeholder := strings.Join(s, ", ")
-
-		// convert []int -> []interface{}
-		args := make([]interface{}, len(postIDs))
-		for i, v := range postIDs {
-			args[i] = v
-		}
-
-		err = db.Get(&commentedCount, "SELECT COUNT(*) AS count FROM `comments` WHERE `post_id` IN ("+placeholder+")", args...)
-		if err != nil {
-			log.Print(err)
-			return
+		for _, postID := range postIDs {
+			commentInfo, ok := postCommentCache.Load(postID)
+			if ok {
+				commentedCount += commentInfo.Count
+			}
 		}
 	}
 
