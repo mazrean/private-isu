@@ -1061,6 +1061,8 @@ func main() {
 			log.Print(err)
 			return
 		}
+
+		os.Exit(0)
 	}()
 
 	_, err := os.Stat(lastGobPath)
