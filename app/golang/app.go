@@ -658,6 +658,7 @@ func getPosts(w http.ResponseWriter, r *http.Request) {
 			results = append(results, *post)
 		}
 	}
+	postCacheLocker.RUnlock()
 
 	posts, err := makePosts(results, getCSRFToken(r), false)
 	if err != nil {
@@ -695,6 +696,7 @@ func getPostsID(w http.ResponseWriter, r *http.Request) {
 			results = append(results, *post)
 		}
 	}
+	postCacheLocker.RUnlock()
 
 	posts, err := makePosts(results, getCSRFToken(r), true)
 	if err != nil {
