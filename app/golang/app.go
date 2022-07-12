@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"path"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -846,42 +847,50 @@ func initImage() error {
 		return fmt.Errorf("failed to create image directory: %w", err)
 	}
 
-	posts := []Post{}
-	err = db.Select(&posts, "SELECT `id`, `mime`, `imgdata` FROM `posts`")
-	if err != nil {
-		return fmt.Errorf("failed to select posts: %w", err)
-	}
-
-	for _, p := range posts {
-		var ext string
-		switch p.Mime {
-		case "image/jpeg":
-			ext = "jpg"
-		case "image/png":
-			ext = "png"
-		case "image/gif":
-			ext = "gif"
-		default:
-			continue
+	var (
+		posts  = make([]Post, 0, 100)
+		offset = 0
+		first  = true
+	)
+	for first || len(posts) < 100 {
+		err = db.Select(&posts, "SELECT `id`, `mime`, `imgdata` FROM `posts` LIMIT 100 OFFSET ?", offset)
+		if err != nil {
+			return fmt.Errorf("failed to select posts: %w", err)
 		}
 
-		err := func() error {
-			f, err := os.Create(fmt.Sprintf("%s/%d.%s", imgDir, p.ID, ext))
-			if err != nil {
-				return fmt.Errorf("failed to create image file: %w", err)
+		for _, p := range posts {
+			var ext string
+			switch p.Mime {
+			case "image/jpeg":
+				ext = "jpg"
+			case "image/png":
+				ext = "png"
+			case "image/gif":
+				ext = "gif"
+			default:
+				continue
 			}
-			defer f.Close()
 
-			_, err = f.Write(p.Imgdata)
+			err := func() error {
+				f, err := os.Create(fmt.Sprintf("%s/%d.%s", imgDir, p.ID, ext))
+				if err != nil {
+					return fmt.Errorf("failed to create image file: %w", err)
+				}
+				defer f.Close()
+
+				_, err = f.Write(p.Imgdata)
+				if err != nil {
+					return fmt.Errorf("failed to write image file: %w", err)
+				}
+
+				return nil
+			}()
 			if err != nil {
 				return fmt.Errorf("failed to write image file: %w", err)
 			}
-
-			return nil
-		}()
-		if err != nil {
-			return fmt.Errorf("failed to write image file: %w", err)
 		}
+
+		runtime.GC()
 	}
 
 	return nil
