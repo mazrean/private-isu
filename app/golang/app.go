@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	crand "crypto/rand"
+	"crypto/sha512"
 	"encoding/gob"
+	"encoding/hex"
 	"fmt"
 	"html/template"
 	"io"
@@ -11,7 +13,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path"
 	"regexp"
@@ -139,13 +140,19 @@ func escapeshellarg(arg string) string {
 
 func digest(src string) string {
 	// opensslのバージョンによっては (stdin)= というのがつくので取る
-	out, err := exec.Command("/bin/bash", "-c", `printf "%s" `+escapeshellarg(src)+` | openssl dgst -sha512 | sed 's/^.*= //'`).Output()
+	/*out, err := exec.Command("/bin/bash", "-c", `printf "%s" `+escapeshellarg(src)+` | openssl dgst -sha512 | sed 's/^.*= //'`).Output()
+	if err != nil {
+		log.Print(err)
+		return ""
+	}*/
+	h := sha512.New()
+	_, err := h.Write([]byte(src))
 	if err != nil {
 		log.Print(err)
 		return ""
 	}
 
-	return strings.TrimSuffix(string(out), "\n")
+	return strings.TrimSuffix(hex.EncodeToString(h.Sum(nil)), "\n")
 }
 
 func calculateSalt(accountName string) string {
@@ -320,10 +327,11 @@ func initUserCache() error {
 	return nil
 }
 
-func makePosts(results []Post, csrfToken string, allComments bool) ([]Post, error) {
-	var posts []Post
+func makePosts(results []Post, csrfToken string, allComments bool) ([]*Post, error) {
+	posts := make([]*Post, 0, len(results))
 
-	for _, p := range results {
+	for i := range results {
+		p := &results[i]
 		commentInfo, ok := postCommentCache.Load(p.ID)
 		if !ok {
 			p.CommentCount = 0
@@ -614,7 +622,7 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 		Me        User
 		CSRFToken string
 		Flash     string
-		Posts     []Post
+		Posts     []*Post
 	}{me, getCSRFToken(r), getFlash(w, r, "notice"), posts})
 	postsPool.Put(&results)
 }
@@ -699,7 +707,7 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 	accountNameTemplate.Execute(w, struct {
 		User           User
 		Me             User
-		Posts          []Post
+		Posts          []*Post
 		PostCount      int
 		CommentCount   int
 		CommentedCount int
@@ -793,7 +801,7 @@ func getPostsID(w http.ResponseWriter, r *http.Request) {
 
 	postIdTemplate.Execute(w, struct {
 		Me   User
-		Post Post
+		Post *Post
 	}{me, p})
 }
 
