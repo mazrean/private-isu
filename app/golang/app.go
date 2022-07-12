@@ -1151,17 +1151,19 @@ func getAdminBanned(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	users := []User{}
-	err := db.Select(&users, "SELECT * FROM `users` WHERE `authority` = 0 AND `del_flg` = 0 ORDER BY `created_at` DESC")
-	if err != nil {
-		log.Print(err)
-		return
-	}
+	var users []*User
+	userCache.Range(func(key int, u *User) bool {
+		if u.Authority == 0 && u.DelFlg == 0 {
+			users = append(users, u)
+		}
+
+		return true
+	})
 
 	adminBannedTemplate.Execute(w, struct {
 		Me        User
 		CSRFToken string
-		Users     []User
+		Users     []*User
 	}{me, getCSRFToken(r), users})
 }
 
