@@ -26,6 +26,7 @@ import (
 	isucache "github.com/mazrean/isucon-go-tools/cache"
 	isudb "github.com/mazrean/isucon-go-tools/db"
 	isuhttp "github.com/mazrean/isucon-go-tools/http"
+	"golang.org/x/sync/errgroup"
 )
 
 var (
@@ -194,24 +195,36 @@ func initPostCommentCache() error {
 		return fmt.Errorf("failed to get post with comment count: %w", err)
 	}
 
+	eg := &errgroup.Group{}
+
 	for _, postWithComment := range postWithComments {
-		var comments []Comment
-		err = db.Select(&comments, "SELECT `comments`.*, "+
-			"`users`.`id` AS `user.id`, `users`.`passhash` AS `user.passhash`, `users`.`account_name` AS `user.account_name`, `users`.`authority` AS `user.authority`, `users`.`created_at` AS `user.created_at` "+
-			"FROM `comments` JOIN `users` ON `comments`.`user_id`=`users`.`id` WHERE `comments`.`post_id` = ? ORDER BY `comments`.`created_at` DESC LIMIT 3", postWithComment.PostID)
-		if err != nil {
-			return fmt.Errorf("failed to get comments: %w", err)
-		}
+		postWithComment := postWithComment
+		eg.Go(func() error {
+			var comments []Comment
+			err = db.Select(&comments, "SELECT `comments`.*, "+
+				"`users`.`id` AS `user.id`, `users`.`passhash` AS `user.passhash`, `users`.`account_name` AS `user.account_name`, `users`.`authority` AS `user.authority`, `users`.`created_at` AS `user.created_at` "+
+				"FROM `comments` JOIN `users` ON `comments`.`user_id`=`users`.`id` WHERE `comments`.`post_id` = ? ORDER BY `comments`.`created_at` DESC LIMIT 3", postWithComment.PostID)
+			if err != nil {
+				return fmt.Errorf("failed to get comments: %w", err)
+			}
 
-		// reverse
-		for i, j := 0, len(comments)-1; i < j; i, j = i+1, j-1 {
-			comments[i], comments[j] = comments[j], comments[i]
-		}
+			// reverse
+			for i, j := 0, len(comments)-1; i < j; i, j = i+1, j-1 {
+				comments[i], comments[j] = comments[j], comments[i]
+			}
 
-		postCommentCache.Store(postWithComment.PostID, &CommentInfo{
-			Count:    postWithComment.CommentCount,
-			Comments: comments,
+			postCommentCache.Store(postWithComment.PostID, &CommentInfo{
+				Count:    postWithComment.CommentCount,
+				Comments: comments,
+			})
+
+			return nil
 		})
+	}
+
+	err = eg.Wait()
+	if err != nil {
+		return fmt.Errorf("failed in errgroup: %w", err)
 	}
 
 	return nil
