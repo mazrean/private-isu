@@ -61,14 +61,14 @@ type Post struct {
 	CreatedAt time.Time `db:"created_at"`
 	Body      string    `db:"body"`
 	Mime      string    `db:"mime"`
-	CSRFToken string
-	Imgdata   []byte `db:"imgdata"`
-	ID        int    `db:"id"`
-	UserID    int    `db:"user_id"`
+	Imgdata   []byte    `db:"imgdata"`
+	ID        int       `db:"id"`
+	UserID    int       `db:"user_id"`
 }
 
 type PostDetail struct {
 	*Post
+	CSRFToken    string
 	User         *User
 	CommentCount int
 	Comments     []Comment
@@ -350,11 +350,11 @@ func makePosts(results []*Post, csrfToken string, allComments bool) ([]*PostDeta
 			}
 		}
 
-		p.CSRFToken = csrfToken
-
 		if postDetail.User.DelFlg != 0 {
 			continue
 		}
+
+		postDetail.CSRFToken = csrfToken
 
 		commentInfo, ok := postCommentCache.Load(p.ID)
 		if !ok {
@@ -380,7 +380,7 @@ func makePosts(results []*Post, csrfToken string, allComments bool) ([]*PostDeta
 	return posts, nil
 }
 
-func imageURL(p Post) string {
+func imageURL(p *PostDetail) string {
 	ext := ""
 	if p.Mime == "image/jpeg" {
 		ext = ".jpg"
