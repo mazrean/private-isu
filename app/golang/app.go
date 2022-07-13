@@ -58,26 +58,28 @@ type User struct {
 }
 
 type Post struct {
-	CreatedAt time.Time `db:"created_at"`
-	Body      string    `db:"body"`
-	Mime      string    `db:"mime"`
-	Imgdata   []byte    `db:"imgdata"`
-	ID        int       `db:"id"`
-	UserID    int       `db:"user_id"`
+	CreatedAt    time.Time `db:"created_at"`
+	Body         string    `db:"body"`
+	Mime         string    `db:"mime"`
+	ImageURL     string
+	CreatedAtStr string
+	Imgdata      []byte `db:"imgdata"`
+	ID           int    `db:"id"`
+	UserID       int    `db:"user_id"`
 }
 
 type PostDetail struct {
 	*Post
-	CSRFToken    string
 	User         *User
-	CommentCount int
+	CSRFToken    string
 	Comments     []Comment
+	CommentCount int
 }
 
 type Comment struct {
-	User      User      `db:"user"`
 	CreatedAt time.Time `db:"created_at"`
 	Comment   string    `db:"comment"`
+	User      User      `db:"user"`
 	ID        int       `db:"id"`
 	PostID    int       `db:"post_id"`
 	UserID    int       `db:"user_id"`
@@ -213,8 +215,8 @@ func getFlash(w http.ResponseWriter, r *http.Request, key string) string {
 }
 
 type CommentInfo struct {
-	Count    int
 	Comments []Comment
+	Count    int
 }
 
 var postCommentCache = isucache.NewAtomicMap[int, *CommentInfo]("post_comment")
@@ -361,7 +363,7 @@ func makePosts(results []*PostDetail, csrfToken string, allComments bool) ([]*Po
 	return posts, nil
 }
 
-func imageURL(p *PostDetail) string {
+func imageURL(p *Post) string {
 	ext := ""
 	if p.Mime == "image/jpeg" {
 		ext = ".jpg"
@@ -442,9 +444,9 @@ func getLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	loginTemplate.Execute(w, struct {
-		Me    User
 		Flash string
-	}{me, getFlash(w, r, "notice")})
+		Me    User
+	}{getFlash(w, r, "notice"), me})
 }
 
 func postLogin(w http.ResponseWriter, r *http.Request) {
@@ -483,9 +485,9 @@ func getRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	registerTemplate.Execute(w, struct {
-		Me    User
 		Flash string
-	}{User{}, getFlash(w, r, "notice")})
+		Me    User
+	}{getFlash(w, r, "notice"), User{}})
 }
 
 func postRegister(w http.ResponseWriter, r *http.Request) {
@@ -573,6 +575,10 @@ func initPostCache() error {
 	err := db.Select(&posts, "SELECT * FROM `posts` ORDER BY `created_at` DESC")
 	if err != nil {
 		return err
+	}
+	for _, p := range posts {
+		p.ImageURL = imageURL(p)
+		p.CreatedAtStr = p.CreatedAt.Format(" 2006-01-02T15:04:05-07:00")
 	}
 
 	postCacheLocker.Lock()
@@ -757,12 +763,12 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 
 	accountNameTemplate.Execute(w, struct {
 		User           *User
-		Me             User
 		Posts          []*PostDetail
+		Me             User
 		PostCount      int
 		CommentCount   int
 		CommentedCount int
-	}{user, me, posts, postCount, commentCount, commentedCount})
+	}{user, posts, me, postCount, commentCount, commentedCount})
 }
 
 var postsTemplate = template.Must(template.New("posts.html").Funcs(fmap).ParseFiles(
@@ -897,9 +903,9 @@ func getPostsID(w http.ResponseWriter, r *http.Request) {
 	me := getSessionUser(r)
 
 	postIdTemplate.Execute(w, struct {
-		Me   User
 		Post *PostDetail
-	}{me, p})
+		Me   User
+	}{p, me})
 }
 
 func postIndex(w http.ResponseWriter, r *http.Request) {
@@ -1034,6 +1040,8 @@ func postIndex(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
+	post.ImageURL = imageURL(&post)
+	post.CreatedAtStr = post.CreatedAt.Format(" 2006-01-02T15:04:05-07:00")
 
 	postCacheLocker.Lock()
 	newPostCache := make([]*Post, 0, len(postCache)+1)
@@ -1239,10 +1247,10 @@ func getAdminBanned(w http.ResponseWriter, r *http.Request) {
 	})
 
 	adminBannedTemplate.Execute(w, struct {
-		Me        User
 		CSRFToken string
 		Users     []*User
-	}{me, getCSRFToken(r), users})
+		Me        User
+	}{getCSRFToken(r), users, me})
 }
 
 func postAdminBanned(w http.ResponseWriter, r *http.Request) {

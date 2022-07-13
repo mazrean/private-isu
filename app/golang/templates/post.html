@@ -1,12 +1,12 @@
-<div class="isu-post" id="pid_{{ .Post.ID }}" data-created-at="{{.Post.CreatedAt.Format " 2006-01-02T15:04:05-07:00"}}">
+<div class="isu-post" id="pid_{{ .Post.ID }}" data-created-at="{{.Post.CreatedAtStr}}">
   <div class="isu-post-header">
     <a href="/@{{.User.AccountName}} " class="isu-post-account-name">{{ .User.AccountName }}</a>
     <a href="/posts/{{.Post.ID}}" class="isu-post-permalink">
-      <time class="timeago" datetime="{{.Post.CreatedAt.Format " 2006-01-02T15:04:05-07:00"}}"></time>
+      <time class="timeago" datetime="{{.Post.CreatedAtStr}}"></time>
     </a>
   </div>
   <div class="isu-post-image">
-    <img src="{{imageURL .}}" class="isu-image">
+    <img src="{{.Post.ImageURL}}" class="isu-image">
   </div>
   <div class="isu-post-text">
     <a href="/@{{.User.AccountName}}" class="isu-post-account-name">{{ .User.AccountName }}</a>
