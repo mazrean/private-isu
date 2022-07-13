@@ -609,7 +609,7 @@ var (
 )
 
 var postsPool = isupool.NewSlice("posts", func() *[]Post {
-	posts := make([]Post, 0, len(postCache))
+	posts := make([]Post, 0, len(postCache)+1000)
 	return &posts
 })
 
@@ -630,11 +630,11 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	indexTemplate.Execute(w, struct {
-		Me        User
+		Me        *User
 		CSRFToken string
 		Flash     string
 		Posts     []*Post
-	}{me, getCSRFToken(r), getFlash(w, r, "notice"), posts})
+	}{&me, getCSRFToken(r), getFlash(w, r, "notice"), posts})
 	postsPool.Put(&results)
 }
 
