@@ -331,41 +331,22 @@ func initUserCache() error {
 	return nil
 }
 
-func makePosts(results []*Post, csrfToken string, allComments bool) ([]*PostDetail, error) {
+func makePosts(results []*PostDetail, csrfToken string, allComments bool) ([]*PostDetail, error) {
 	posts := make([]*PostDetail, 0, len(results))
 
 	for _, p := range results {
-		postDetail := &PostDetail{
-			Post:         p,
-			CommentCount: 0,
-		}
-
-		var ok bool
-		postDetail.User, ok = userCache.Load(p.UserID)
-		if !ok {
-			postDetail.User = &User{}
-			err := db.Get(postDetail.User, "SELECT * FROM `users` WHERE `id` = ?", p.UserID)
-			if err != nil {
-				return nil, err
-			}
-		}
-
-		if postDetail.User.DelFlg != 0 {
-			continue
-		}
-
-		postDetail.CSRFToken = csrfToken
+		p.CSRFToken = csrfToken
 
 		commentInfo, ok := postCommentCache.Load(p.ID)
 		if !ok {
-			postDetail.CommentCount = 0
-			postDetail.Comments = []Comment{}
+			p.CommentCount = 0
+			p.Comments = []Comment{}
 		} else {
-			postDetail.CommentCount = commentInfo.Count
+			p.CommentCount = commentInfo.Count
 			if !allComments {
-				postDetail.Comments = commentInfo.Comments
+				p.Comments = commentInfo.Comments
 			} else {
-				err := db.Select(&postDetail.Comments, "SELECT `comments`.*, "+
+				err := db.Select(&p.Comments, "SELECT `comments`.*, "+
 					"`users`.`id` AS `user.id`, `users`.`passhash` AS `user.passhash`, `users`.`account_name` AS `user.account_name`, `users`.`authority` AS `user.authority`, `users`.`created_at` AS `user.created_at` "+
 					"FROM `comments` JOIN `users` ON `comments`.`user_id`=`users`.`id` WHERE `comments`.`post_id` = ? ORDER BY `comments`.`created_at` ASC", p.ID)
 				if err != nil {
@@ -374,7 +355,7 @@ func makePosts(results []*Post, csrfToken string, allComments bool) ([]*PostDeta
 			}
 		}
 
-		posts = append(posts, postDetail)
+		posts = append(posts, p)
 	}
 
 	return posts, nil
@@ -613,8 +594,8 @@ var (
 	))
 )
 
-var postsPool = isupool.NewSlice("posts", func() *[]*Post {
-	posts := make([]*Post, 0, postsPerPage)
+var postsPool = isupool.NewSlice("posts", func() *[]*PostDetail {
+	posts := make([]*PostDetail, 0, postsPerPage)
 	return &posts
 })
 
@@ -624,7 +605,26 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 	postCacheLocker.RLock()
 	results := *postsPool.Get()
 	for _, post := range postCache {
-		results = append(results, post)
+		postDetail := PostDetail{
+			Post:         post,
+			CommentCount: 0,
+		}
+
+		var ok bool
+		postDetail.User, ok = userCache.Load(post.UserID)
+		if !ok {
+			postDetail.User = &User{}
+			err := db.Get(postDetail.User, "SELECT * FROM `users` WHERE `id` = ?", post.UserID)
+			if err != nil {
+				log.Print(err)
+				continue
+			}
+		}
+
+		if postDetail.User.DelFlg != 0 {
+			continue
+		}
+		results = append(results, &postDetail)
 
 		if len(results) >= postsPerPage {
 			break
@@ -689,12 +689,31 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results := []*Post{}
+	results := *postsPool.Get()
 	postIDs := []int{}
 	postCacheLocker.RLock()
 	for _, post := range postCache {
 		if post.UserID == user.ID {
-			results = append(results, post)
+			postDetail := PostDetail{
+				Post:         post,
+				CommentCount: 0,
+			}
+
+			var ok bool
+			postDetail.User, ok = userCache.Load(post.UserID)
+			if !ok {
+				postDetail.User = &User{}
+				err := db.Get(postDetail.User, "SELECT * FROM `users` WHERE `id` = ?", post.UserID)
+				if err != nil {
+					log.Print(err)
+					continue
+				}
+			}
+
+			if postDetail.User.DelFlg != 0 {
+				continue
+			}
+			results = append(results, &postDetail)
 
 			if len(results) >= postsPerPage {
 				break
@@ -773,7 +792,26 @@ func getPosts(w http.ResponseWriter, r *http.Request) {
 	results := *postsPool.Get()
 	for _, post := range postCache {
 		if post.CreatedAt.Before(t) {
-			results = append(results, post)
+			postDetail := PostDetail{
+				Post:         post,
+				CommentCount: 0,
+			}
+
+			var ok bool
+			postDetail.User, ok = userCache.Load(post.UserID)
+			if !ok {
+				postDetail.User = &User{}
+				err := db.Get(postDetail.User, "SELECT * FROM `users` WHERE `id` = ?", post.UserID)
+				if err != nil {
+					log.Print(err)
+					continue
+				}
+			}
+
+			if postDetail.User.DelFlg != 0 {
+				continue
+			}
+			results = append(results, &postDetail)
 
 			if len(results) >= postsPerPage {
 				break
@@ -811,11 +849,30 @@ func getPostsID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results := []*Post{}
+	results := []*PostDetail{}
 	postCacheLocker.RLock()
 	for _, post := range postCache {
 		if post.ID == pid {
-			results = append(results, post)
+			postDetail := PostDetail{
+				Post:         post,
+				CommentCount: 0,
+			}
+
+			var ok bool
+			postDetail.User, ok = userCache.Load(post.UserID)
+			if !ok {
+				postDetail.User = &User{}
+				err := db.Get(postDetail.User, "SELECT * FROM `users` WHERE `id` = ?", post.UserID)
+				if err != nil {
+					log.Print(err)
+					continue
+				}
+			}
+
+			if postDetail.User.DelFlg != 0 {
+				continue
+			}
+			results = append(results, &postDetail)
 
 			if len(results) >= postsPerPage {
 				break
