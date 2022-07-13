@@ -58,16 +58,20 @@ type User struct {
 }
 
 type Post struct {
-	User         User
-	CreatedAt    time.Time `db:"created_at"`
-	Body         string    `db:"body"`
-	Mime         string    `db:"mime"`
-	CSRFToken    string
-	Imgdata      []byte `db:"imgdata"`
-	Comments     []Comment
-	ID           int `db:"id"`
-	UserID       int `db:"user_id"`
+	CreatedAt time.Time `db:"created_at"`
+	Body      string    `db:"body"`
+	Mime      string    `db:"mime"`
+	CSRFToken string
+	Imgdata   []byte `db:"imgdata"`
+	ID        int    `db:"id"`
+	UserID    int    `db:"user_id"`
+}
+
+type PostDetail struct {
+	*Post
+	User         *User
 	CommentCount int
+	Comments     []Comment
 }
 
 type Comment struct {
@@ -327,49 +331,50 @@ func initUserCache() error {
 	return nil
 }
 
-func makePosts(results []Post, csrfToken string, allComments bool) ([]*Post, error) {
-	posts := make([]*Post, 0, len(results))
+func makePosts(results []*Post, csrfToken string, allComments bool) ([]*PostDetail, error) {
+	posts := make([]*PostDetail, 0, len(results))
 
-	for i := range results {
-		p := &results[i]
+	for _, p := range results {
+		postDetail := &PostDetail{
+			Post:         p,
+			CommentCount: 0,
+		}
+
+		var ok bool
+		postDetail.User, ok = userCache.Load(p.UserID)
+		if !ok {
+			postDetail.User = &User{}
+			err := db.Get(postDetail.User, "SELECT * FROM `users` WHERE `id` = ?", p.UserID)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		p.CSRFToken = csrfToken
+
+		if postDetail.User.DelFlg != 0 {
+			continue
+		}
+
 		commentInfo, ok := postCommentCache.Load(p.ID)
 		if !ok {
-			p.CommentCount = 0
-			p.Comments = []Comment{}
+			postDetail.CommentCount = 0
+			postDetail.Comments = []Comment{}
 		} else {
-			p.CommentCount = commentInfo.Count
+			postDetail.CommentCount = commentInfo.Count
 			if !allComments {
-				p.Comments = commentInfo.Comments
+				postDetail.Comments = commentInfo.Comments
 			} else {
-				var comments []Comment
-				err := db.Select(&comments, "SELECT `comments`.*, "+
+				err := db.Select(&postDetail.Comments, "SELECT `comments`.*, "+
 					"`users`.`id` AS `user.id`, `users`.`passhash` AS `user.passhash`, `users`.`account_name` AS `user.account_name`, `users`.`authority` AS `user.authority`, `users`.`created_at` AS `user.created_at` "+
 					"FROM `comments` JOIN `users` ON `comments`.`user_id`=`users`.`id` WHERE `comments`.`post_id` = ? ORDER BY `comments`.`created_at` ASC", p.ID)
 				if err != nil {
 					return nil, err
 				}
-
-				p.Comments = comments
 			}
 		}
 
-		user, ok := userCache.Load(p.UserID)
-		if !ok {
-			err := db.Get(&p.User, "SELECT * FROM `users` WHERE `id` = ?", p.UserID)
-			if err != nil {
-				return nil, err
-			}
-		}
-		p.User = *user
-
-		p.CSRFToken = csrfToken
-
-		if p.User.DelFlg == 0 {
-			posts = append(posts, p)
-		}
-		if len(posts) >= postsPerPage {
-			break
-		}
+		posts = append(posts, postDetail)
 	}
 
 	return posts, nil
@@ -608,8 +613,8 @@ var (
 	))
 )
 
-var postsPool = isupool.NewSlice("posts", func() *[]Post {
-	posts := make([]Post, 0, len(postCache)+1000)
+var postsPool = isupool.NewSlice("posts", func() *[]*Post {
+	posts := make([]*Post, 0, postsPerPage)
 	return &posts
 })
 
@@ -619,7 +624,11 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 	postCacheLocker.RLock()
 	results := *postsPool.Get()
 	for _, post := range postCache {
-		results = append(results, *post)
+		results = append(results, post)
+
+		if len(results) >= postsPerPage {
+			break
+		}
 	}
 	postCacheLocker.RUnlock()
 
@@ -633,7 +642,7 @@ func getIndex(w http.ResponseWriter, r *http.Request) {
 		Me        *User
 		CSRFToken string
 		Flash     string
-		Posts     []*Post
+		Posts     []*PostDetail
 	}{&me, getCSRFToken(r), getFlash(w, r, "notice"), posts})
 	postsPool.Put(&results)
 }
@@ -680,12 +689,16 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results := []Post{}
+	results := []*Post{}
 	postIDs := []int{}
 	postCacheLocker.RLock()
 	for _, post := range postCache {
 		if post.UserID == user.ID {
-			results = append(results, *post)
+			results = append(results, post)
+
+			if len(results) >= postsPerPage {
+				break
+			}
 		}
 	}
 	postCacheLocker.RUnlock()
@@ -726,7 +739,7 @@ func getAccountName(w http.ResponseWriter, r *http.Request) {
 	accountNameTemplate.Execute(w, struct {
 		User           *User
 		Me             User
-		Posts          []*Post
+		Posts          []*PostDetail
 		PostCount      int
 		CommentCount   int
 		CommentedCount int
@@ -760,7 +773,11 @@ func getPosts(w http.ResponseWriter, r *http.Request) {
 	results := *postsPool.Get()
 	for _, post := range postCache {
 		if post.CreatedAt.Before(t) {
-			results = append(results, *post)
+			results = append(results, post)
+
+			if len(results) >= postsPerPage {
+				break
+			}
 		}
 	}
 	postCacheLocker.RUnlock()
@@ -794,11 +811,15 @@ func getPostsID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results := []Post{}
+	results := []*Post{}
 	postCacheLocker.RLock()
 	for _, post := range postCache {
 		if post.ID == pid {
-			results = append(results, *post)
+			results = append(results, post)
+
+			if len(results) >= postsPerPage {
+				break
+			}
 		}
 	}
 	postCacheLocker.RUnlock()
@@ -820,7 +841,7 @@ func getPostsID(w http.ResponseWriter, r *http.Request) {
 
 	postIdTemplate.Execute(w, struct {
 		Me   User
-		Post *Post
+		Post *PostDetail
 	}{me, p})
 }
 
